@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 540" width="1160" height="540" role="img" aria-label="Architecture: the game steps 60 times a second; the loop sends a screenshot to the model; the model answers about 5 times a second; the chosen move is pressed and held for a few frames" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="a-slate" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#475569"/>
+    </marker>
+    <marker id="a-amber" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#d97706"/>
+    </marker>
+    <filter id="soft" x="-25%" y="-35%" width="150%" height="180%">
+      <feDropShadow dx="0" dy="5" stdDeviation="8" flood-color="#0f172a" flood-opacity="0.14"/>
+    </filter>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f9fafb"/>
+      <stop offset="1" stop-color="#eef2f7"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1160" height="540" rx="26" fill="url(#bg)"/>
+
+  <text x="580" y="52" text-anchor="middle" font-size="30" font-weight="800" fill="#0f172a">How a screenshot becomes a button press</text>
+  <text x="580" y="82" text-anchor="middle" font-size="16" fill="#64748b">One loop. Two clocks that don&#8217;t agree.</text>
+
+  <line x1="316" y1="250" x2="422" y2="250" stroke="#475569" stroke-width="3" marker-end="url(#a-slate)"/>
+  <text x="369" y="281" text-anchor="middle" font-size="13.5" fill="#475569">screenshot</text>
+
+  <line x1="736" y1="250" x2="842" y2="250" stroke="#475569" stroke-width="3" marker-end="url(#a-slate)"/>
+  <text x="789" y="281" text-anchor="middle" font-size="13.5" fill="#475569">small JPEG</text>
+
+  <path d="M990 380 L990 452 Q990 472 970 472 L190 472 Q170 472 170 452 L170 386" fill="none" stroke="#d97706" stroke-width="3" marker-end="url(#a-amber)"/>
+  <rect x="300" y="452" width="560" height="40" rx="10" fill="url(#bg)"/>
+  <text x="580" y="478" text-anchor="middle" font-size="15" font-weight="700" fill="#b45309">the chosen move &#8212; pressed and held for the next few frames</text>
+
+  <g filter="url(#soft)"><rect x="30" y="120" width="280" height="260" rx="22" fill="#ffffff" stroke="#4ade80" stroke-width="2.5"/></g>
+  <text x="170" y="164" text-anchor="middle" font-size="19" font-weight="800" fill="#15803d">THE GAME</text>
+  <text x="170" y="190" text-anchor="middle" font-size="14" fill="#64748b">a real NES emulator</text>
+  <text x="170" y="274" text-anchor="middle" font-size="60" font-weight="800" fill="#16a34a">60</text>
+  <text x="170" y="300" text-anchor="middle" font-size="15" font-weight="700" fill="#15803d">frames / second</text>
+  <text x="170" y="352" text-anchor="middle" font-size="13" fill="#94a3b8">runs on its own, never waits</text>
+
+  <g filter="url(#soft)"><rect x="430" y="120" width="300" height="260" rx="22" fill="#ffffff" stroke="#60a5fa" stroke-width="2.5"/></g>
+  <text x="580" y="164" text-anchor="middle" font-size="19" font-weight="800" fill="#1d4ed8">THE LOOP</text>
+  <text x="580" y="190" text-anchor="middle" font-size="14" fill="#64748b">this repo&#8217;s whole job</text>
+  <text x="464" y="238" font-size="15" fill="#334155">1.  grab a screenshot</text>
+  <text x="464" y="268" font-size="15" fill="#334155">2.  ask the model</text>
+  <text x="464" y="298" font-size="15" fill="#334155">3.  press its move</text>
+  <text x="580" y="352" text-anchor="middle" font-size="13" fill="#94a3b8">keeps the two clocks in sync</text>
+
+  <g filter="url(#soft)"><rect x="850" y="120" width="280" height="260" rx="22" fill="#ffffff" stroke="#a78bfa" stroke-width="2.5"/></g>
+  <text x="990" y="164" text-anchor="middle" font-size="19" font-weight="800" fill="#6d28d9">THE MODEL</text>
+  <text x="990" y="190" text-anchor="middle" font-size="14" fill="#64748b">Decisions API &#183; gpt-6-luna</text>
+  <text x="990" y="274" text-anchor="middle" font-size="60" font-weight="800" fill="#7c3aed">~5</text>
+  <text x="990" y="300" text-anchor="middle" font-size="15" font-weight="700" fill="#6d28d9">answers / second</text>
+  <text x="990" y="352" text-anchor="middle" font-size="13" fill="#94a3b8">sees only pixels &#183; no memory</text>
+</svg>
