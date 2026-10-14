@@ -73,31 +73,28 @@ else fixed (each move covers **8 game frames**), twice each:
 | 30 fps | 0.16 s | **8** | 36 | **722** | [▶](docs/media/live_fps30.mp4) |
 | 60 fps | 0.20 s | **12** | 40 | **722** | [▶](docs/media/live_fps60.mp4) |
 
-The result is more interesting than "fast is hard", so we'll report it straight:
+Here's what we found:
 
-- **Below the limit, slow motion changes the clock, not the game.** At 15 and 30 fps the
-  model's reply beats the move, so it gets asked at exactly the same points and plays a
-  *pixel-identical* game — same decisions, same frames. Only the wall-clock differs
-  (19.8 s vs 10.0 s). Slow motion turns out to be a viewing convenience, not a difficulty
-  setting.
-- **At 60 fps the model can no longer keep up.** Its reply now lands about **12 game
-  frames** after the question, so every move is held roughly twice as long as planned.
-  That is the speed gap showing up as *stalls*: the world keeps moving while the answer is
-  still in flight.
-- **On World 1-1 it doesn't cost a life either way.** All three runs reach the same
-  distance, because World 1-1 is the most-reproduced level in gaming and a model that
-  already knows it can paper over stale timing. So read this as a claim about **timing**,
-  not about score.
+- **At 15 and 30 fps, slowing the game down changes only the clock — not the game.** The
+  model answers faster than each move lasts, so it plays the *exact same* game both times:
+  same decisions, same frames, just stretched over 19.8 s instead of 10.0 s. Slow motion is
+  a viewing trick, not a difficulty setting.
+- **At 60 fps, the model can't keep up.** Its answer arrives about **12 frames** after the
+  question, so every move gets held roughly twice as long. The game keeps moving while the
+  model is still thinking — that's the speed gap, and it shows up as stalling.
+- **On World 1-1, it doesn't cost a life either way.** All three runs get to the same spot,
+  because 1-1 is the most-copied level in gaming and a model that already knows it can hide
+  bad timing. So this is a claim about **timing**, not about score.
 
-The one rule that falls out of it:
+It all comes down to one line:
 
 ```
 game frames each move really covers  =  max( frames_per_decision ,  latency × game_fps )
 ```
 
-For as long as the reply is quicker than the move, the *next* answer is already waiting
-when the current move ends. Once `latency × game_fps` overtakes `frames_per_decision`, the
-model starts falling behind and the staleness grows.
+As long as the model answers before a move ends, the next answer is already waiting when the
+move finishes. Once `latency × game_fps` gets bigger than `frames_per_decision`, the model
+starts falling behind.
 
 ## Watch the three runs
 
@@ -193,52 +190,49 @@ the timing.
 
 ## Five tricks for closing the gap
 
-The game is a firehose of frames; the model is a slow, expensive advisor. Each trick below
-buys back a little responsiveness, and all five are switchable from the command line:
+The game makes 60 frames a second; the model can only answer a few times a second. These
+five tricks close the difference, and each one is a command-line flag:
 
 | | Trick | Flag | What it buys |
 |---|---|---|---|
-| **A** | **Bigger steps** | `--frames-per-decision N` | one answer covers N frames instead of one |
-| **B** | **Ask ahead** | `--mode pipelined` | the next question is already in flight while the game keeps moving |
-| **C** | **Send a smaller picture** | `--max-side` / `--jpeg-quality` | less image → faster, cheaper answers (**smaller, never cropped**) |
-| **D** | **Slow the game down** | `--fps N` / `--auto-fps` | genuine slow motion, so a quick reply becomes fine control |
-| **E** | **Skip identical frames** | `--cache` | if the screen barely changed, replay the last move |
+| **A** | **Bigger steps** | `--frames-per-decision N` | one answer covers N frames |
+| **B** | **Ask ahead** | `--mode pipelined` | the next question is already on its way while the game keeps moving |
+| **C** | **Smaller picture** | `--max-side` / `--jpeg-quality` | a smaller image means faster, cheaper answers (**never cropped**) |
+| **D** | **Slow the game down** | `--fps N` / `--auto-fps` | real slow motion, so a quick reply becomes fine control |
+| **E** | **Skip identical frames** | `--cache` | if the screen barely changed, repeat the last move |
 
-**D can calculate itself.** Give it a latency budget (`--auto-fps --stale-budget 10`) and
-it picks the game speed for you: 0.25 s → ~40 fps, 1 s → ~10 fps. Slower game, more
-responsive agent — but a longer watch.
+**D can work itself out.** Tell it how much lag you'll accept (`--auto-fps --stale-budget
+10`) and it picks the game speed for you: a 0.25 s reply → ~40 fps, a 1 s reply → ~10 fps.
+Slower game, snappier agent — but a longer watch.
 
-**C never crops.** It shrinks and compresses the image but keeps the *full* field of view.
-Crop it and you hide the Goomba, and a model that can't see the Goomba picks the wrong
-move. `--save-frames DIR` dumps exactly what was sent so you can check.
+**C never crops.** It makes the picture smaller and lower quality, but never cuts anything
+out. Cut out the edges and you hide the Goomba — and a model that can't see the Goomba picks
+the wrong move. `--save-frames DIR` saves exactly what was sent, so you can check.
 
-**E is a latency and cost trick, not a skill trick.** Frames are compared with a coarse
-16×16 perceptual hash, so "the screen barely moved" can reuse the last move — but
-`--cache-max-reuse` forces a fresh call so a frozen screen can't lock the agent in place.
-It's deliberately switched off for the blank-frame control, where every frame is identical
-and the cache would fake a perfect score.
+**E saves time and money, not skill.** It compares frames with a rough 16×16 fingerprint, so
+if the screen barely changed it can repeat the last move. `--cache-max-reuse` forces a fresh
+call anyway, so a frozen screen can't lock the agent in place. It's switched off for the
+blank-frame control, where every frame is identical and the cache would fake a perfect score.
 
 ## Honest limits
 
-Read this before quoting any number above.
+Don't quote any number above without reading this.
 
-- **World 1-1 is probably memorized.** It's the most-reproduced level in gaming, and the
-  model's knowledge is well past it. All three speeds reach the same distance partly because
-  a model that already knows the level can paper over stale timing. A good score here is
-  **not** proof of vision.
-- **Two runs per speed, one level.** The table is two episodes per speed. The 15 and 30 fps
-  pairs landing on identical play is the clean part; the rest is still a small sample on a
-  single, famous level.
-- **A latency spike breaks the pattern.** One 30 fps run caught a 0.49 s reply instead of
-  0.16 s, stalled ~9 game frames per decision, and stopped short at x=434. Reply times are
-  not constant, and the loop is only as good as the worst reply it gets.
-- **Slow motion isn't real time.** At 15 fps the game runs 4× slower than a human would see
-  it. Keeping up at 15–30 fps is honest; at a true 60 fps the model falls behind.
+- **World 1-1 is probably memorized.** It's the most-copied level in gaming, and the model
+  has seen it many times. A good score here is **not** proof that it can see — knowing the
+  level can hide bad timing.
+- **Only two runs per speed, on one level.** The 15 and 30 fps pairs matching exactly is the
+  clean part; the rest is still a small sample on a single, famous level.
+- **A slow reply breaks the pattern.** One 30 fps run got a 0.49 s reply instead of 0.16 s,
+  stalled ~9 frames per move, and stopped short at x=434. Reply times vary, and the loop is
+  only as good as its worst reply.
+- **Slow motion isn't real time.** At 15 fps the game runs 4× slower than you'd see it.
+  Keeping up at 15–30 fps is real; at a true 60 fps the model falls behind.
 
 ## Using the real model
 
-Grab a standard OpenAI key — the Decisions API is public beta, no waitlist. Then measure
-first, play second:
+You'll need a standard OpenAI key — the Decisions API is public beta, no waitlist. Measure
+first, then play:
 
 ```bash
 export OPENAI_API_KEY=sk-...
@@ -248,7 +242,7 @@ python -m mda --env mario --backend live --auto-fps --cache \
     --scale 3 --record runs/live.mp4          # watch it play (and save the video)
 ```
 
-Prefer it fully offline? Both examples work with `--backend mock` and no key at all.
+Prefer it fully offline? Both commands work with `--backend mock` and no key at all.
 
 ### Key flags
 
