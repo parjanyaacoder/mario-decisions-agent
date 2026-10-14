@@ -23,9 +23,10 @@
 > **Can a vision-based Decisions-API agent make progress in a real-time physics
 > game from screenshots alone?**
 
-The interesting part isn't "can it beat 1-1". It's the **speed mismatch**: the NES
-steps **60 times per second**, and the API answers roughly **5 times per second**.
-Almost everything in this repo exists to manage that gap honestly.
+The interesting part isn't "can it beat 1-1". It's the **speed mismatch**: Super
+Mario Bros is a real-time game — its world updates **60 times every second** — but
+the API can only answer about **5 times per second**. Almost everything in this repo
+exists to manage that gap honestly.
 
 ## Headline result
 
