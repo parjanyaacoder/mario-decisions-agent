@@ -14,6 +14,8 @@ No memory hacks. No hidden game state. Pixels in, button out.
 
 <sub>An AI model playing World 1-1 from raw screenshots — slowed down so you can watch.</sub>
 
+<sub>The real model is the OpenAI Decisions API (<code>gpt-6-luna</code>); reproducing these runs needs your own API key.</sub>
+
 </div>
 
 ---
@@ -58,38 +60,54 @@ information — is the entire project.
 
 ## How well does it actually do?
 
-Measured, not guessed. The model's steady reply time is **~0.20 s**, which caps how often
-it can possibly decide. Speed the game up and you can *watch* it fall apart:
+Measured, not guessed. The model's steady reply time is **~0.20 s**, and everything here
+comes down to one clash: the game advances **60 frames a second**, the model answers about
+**5 times a second**.
 
-| Run | Game speed | Each move lasts | Decisions | Outcome | Distance reached | Cost | Watch |
-|---|--:|--:|--:|---|--:|--:|---|
-| **A** | 15 fps | 8 frames | **40** | survived (hit the time budget) | **722** | $0.002 | [▶](docs/media/live_fps15.mp4) |
-| **B** | 30 fps | 12 frames | **19** | died | **694** | $0.001 | [▶](docs/media/live_fps30.mp4) |
-| **C** | 60 fps | 20 frames | **3** | died | **315** | $0.0002 | [▶](docs/media/live_fps60.mp4) |
+We ran the same match at three game speeds — **15, 30 and 60 fps** — holding everything
+else fixed (each move covers **8 game frames**), twice each:
 
-Two simple rules fall out of this, and they *are* the project:
+| Game speed | Reply time | Game frames each move really covers | Decisions | Distance | Watch |
+|--:|--:|--:|--:|--:|--:|
+| 15 fps | 0.19 s | **8** | 36 | **722** | [▶](docs/media/live_fps15.mp4) |
+| 30 fps | 0.16 s | **8** | 36 | **722** | [▶](docs/media/live_fps30.mp4) |
+| 60 fps | 0.20 s | **12** | 40 | **722** | [▶](docs/media/live_fps60.mp4) |
+
+The result is more interesting than "fast is hard", so we'll report it straight:
+
+- **Below the limit, slow motion changes the clock, not the game.** At 15 and 30 fps the
+  model's reply beats the move, so it gets asked at exactly the same points and plays a
+  *pixel-identical* game — same decisions, same frames. Only the wall-clock differs
+  (19.8 s vs 10.0 s). Slow motion turns out to be a viewing convenience, not a difficulty
+  setting.
+- **At 60 fps the model can no longer keep up.** Its reply now lands about **12 game
+  frames** after the question, so every move is held roughly twice as long as planned.
+  That is the speed gap showing up as *stalls*: the world keeps moving while the answer is
+  still in flight.
+- **On World 1-1 it doesn't cost a life either way.** All three runs reach the same
+  distance, because World 1-1 is the most-reproduced level in gaming and a model that
+  already knows it can paper over stale timing. So read this as a claim about **timing**,
+  not about score.
+
+The one rule that falls out of it:
 
 ```
-decisions per second of GAME   =  60 / frames_per_decision     # how often we get to think
-game-frames that pass per call =  latency × game_fps           # how stale the picture is when the answer lands
+game frames each move really covers  =  max( frames_per_decision ,  latency × game_fps )
 ```
 
-At 15 fps an answer is only ~2.4 frames old by the time it lands — quick enough to play.
-At full 60 fps it arrives ~11 frames late: Mario has already sprinted blind for a sixth
-of a second, and he dies. **Slow motion isn't a gimmick here — it's the only thing that
-makes the model's reaction time usable.**
-
-*(Fair warning: these three runs changed game speed and decision length together, so
-"faster game → worse" is real but not purely a speed effect. See [Honest limits](#honest-limits).)*
+For as long as the reply is quicker than the move, the *next* answer is already waiting
+when the current move ends. Once `latency × game_fps` overtakes `frames_per_decision`, the
+model starts falling behind and the staleness grows.
 
 ## Watch the three runs
 
-| 15 fps — survives | 30 fps — dies after 19 decisions | 60 fps — dead in 3 |
+| 15 fps | 30 fps | 60 fps |
 |---|---|---|
 | <img src="docs/media/live_fps15.gif" width="260"> | <img src="docs/media/live_fps30.gif" width="260"> | <img src="docs/media/live_fps60.gif" width="260"> |
 
-At 15 fps you're watching genuine slow motion — the game is deliberately throttled so the
-model has time to think. At 60 fps it's full speed, and Mario is dead in under two seconds.
+The 15 and 30 fps clips are the *same game* at two speeds — the model makes the same moves
+on the same frames, just played slower. The 60 fps clip is where it starts lagging behind
+the action.
 
 ## Try it in 60 seconds
 
@@ -107,8 +125,12 @@ python -m mda --env mario --backend mock --render --scale 3 --fps 30 --frames-pe
 ```
 
 A window opens and a simple offline heuristic plays the game using the *exact same loop*
-the real model uses. Swap `--backend mock` for `--backend live` (plus a key) and the
-remote model takes the controls.
+the real model uses.
+
+> **Every number and clip in this README comes from the real model, and reproducing them
+> needs your own OpenAI API key.** The offline `--backend mock` path runs the whole thing
+> for free, but only `--backend live` with `OPENAI_API_KEY` set talks to the actual
+> Decisions API (`gpt-6-luna`). See [Using the real model](#using-the-real-model).
 
 ---
 
@@ -138,21 +160,30 @@ can run offline:
 ### Project layout
 
 ```
-src/mda/
-  actions.py    10-move macro menu (held + tapped buttons, per-frame masks)
-  env.py        MockEnv (offline toy platformer) + MarioEnv (real NES, lazy import)
-  backends.py   MockBackend (offline heuristic) + LiveBackend (/v1/decisions)
-  cache.py      trick E: perceptual-hash frame cache
-  viewer.py     resizeable, pixel-crisp game window
-  video.py      headless MP4 / GIF / PNG recording
-  loop.py       blocking + pipelined game loops, frame pacing
-  hud.py        on-screen HUD (fps, latency, chosen move, cost)
-  recorder.py   JSONL run log
-  __main__.py   command-line interface
-scripts/
-  probe_latency.py       measure the model's real reply time — run this first
-  make_preview_gifs.py   turn recorded runs into the clips in docs/media
-tests/test_pipeline.py   16 offline tests: no key, no ROM, no network
+mario-decisions-agent/
+├── src/mda/
+│   ├── __main__.py     command-line interface
+│   ├── loop.py         blocking + pipelined game loops, frame pacing
+│   ├── env.py          MockEnv (offline toy platformer) + MarioEnv (real NES, lazy import)
+│   ├── backends.py     MockBackend (offline heuristic) + LiveBackend (/v1/decisions)
+│   ├── actions.py      10-move macro menu (held + tapped buttons, per-frame masks)
+│   ├── cache.py        trick E: perceptual-hash frame cache
+│   ├── viewer.py       resizeable, pixel-crisp game window
+│   ├── video.py        headless MP4 / GIF / PNG recording
+│   ├── hud.py          on-screen HUD (fps, latency, chosen move, cost)
+│   └── recorder.py     JSONL run log
+├── scripts/
+│   ├── probe_latency.py       measure the model's real reply time — run this first
+│   ├── make_preview_gifs.py   turn recorded runs into the clips in docs/media
+│   └── make_readme_pdf.py     render this README to a PDF (needs Chrome)
+├── tests/
+│   └── test_pipeline.py       17 offline tests: no key, no ROM, no network
+├── docs/
+│   ├── architecture.svg       how the world, the loop and the brain fit together
+│   ├── speed-gap.svg          why a ~5 Hz brain fights a 60 Hz game
+│   ├── mario-decisions-agent.pdf   this README as a printable PDF
+│   └── media/                 the committed clips this README plays
+└── pyproject.toml             dependencies + the `mario` / `record` / `docs` extras
 ```
 
 Curious how it runs with no key? `MockEnv` is a tiny hand-built platformer — gravity,
@@ -187,70 +218,22 @@ move. `--save-frames DIR` dumps exactly what was sent so you can check.
 It's deliberately switched off for the blank-frame control, where every frame is identical
 and the cache would fake a perfect score.
 
----
-
-## What actually broke (the honest log)
-
-Every item here has code and a test behind it. This is the part of the project that took
-the longest and taught the most.
-
-**1. One measurement that reframed everything.** The very first live call took **4.07
-seconds** — which looked fatal for a real-time game. The next five took **0.17–0.23 s**.
-That first number was a cold start; the steady state is **~0.20 s**, which turns
-"impossible" into "genuinely near-real-time at low speeds". Lesson: measure the model
-before you design around it.
-
-**2. The API occasionally throws a `503`.** A single mid-run blip would have killed an
-entire recording. Added exponential-backoff retries for `408/409/425/429/5xx`, plus a test
-that fires two `503`s and then a success.
-
-**3. A crash that only happens on the second game.** On macOS, the emulator's own window
-can only be created once per process — the second attempt dies with a cryptic
-`PygletDelegate` error. Fixed by building the environment once and reusing it, and by
-replacing the stock game window with one that resizes nicely and closes cleanly.
-
-**4. A flag that silently did nothing.** Game-speed pacing was wired into only one of the
-two loop modes, so "slow" runs in the other mode raced by at thousands of frames a second.
-Pacing is now shared by both loops.
-
-**5. What counts as "nothing changed"?** An exact pixel match would essentially never fire
-in a moving game. The useful version is a coarse perceptual hash — sensitive enough to
-catch a genuinely still screen, loose enough not to reuse a stale move when something new
-creeps into the frame.
-
-**6. Dependency pins for real bugs.** `numpy<2` (older `nes-py` overflows) and `gym<0.26`
-(the API changed shape). The bundled game ROM means there's nothing extra to download, and
-it ships sprite-perturbed variants we use as controls.
-
-## Proving it's actually *seeing*
-
-A model that has memorized World 1-1 could look good without seeing anything. This repo is
-built to be *disbelieved*, so it ships controls:
-
-- **Blank-frame control** (`--control blank`) — run the identical pipeline on a featureless
-  frame. If performance barely drops, the model is recalling, not looking.
-- **Perturbed sprites** (`--rom-mode pixel|rectangle|downsample`) — swap the graphics so
-  familiar pixel patterns can't be memorized.
-- **Unseen levels** (`--world …`) — so layout memory is useless.
-- **Score-only memory.** The emulator's internal state (position, lives, time) is used to
-  *grade* runs and is **never** put in the model's prompt. The model only ever sees pixels.
-- **Full logging.** `--save-frames` writes every image sent; `--record` writes the played
-  frames; `--out` writes a per-decision log.
-
 ## Honest limits
 
 Read this before quoting any number above.
 
 - **World 1-1 is probably memorized.** It's the most-reproduced level in gaming, and the
-  model's knowledge is well past it. A good score here is **not** proof of vision — which is
-  exactly why the controls exist.
-- **One run each.** Runs A–C are single episodes; "faster is worse" is suggestive, not
-  statistically proven.
-- **Speed and step size moved together.** The sweep changed both `frames-per-decision` and
-  fps, so it shows "faster game → worse" without isolating speed alone. A clean run holds
-  step size fixed and adds seeds.
+  model's knowledge is well past it. All three speeds reach the same distance partly because
+  a model that already knows the level can paper over stale timing. A good score here is
+  **not** proof of vision.
+- **Two runs per speed, one level.** The table is two episodes per speed. The 15 and 30 fps
+  pairs landing on identical play is the clean part; the rest is still a small sample on a
+  single, famous level.
+- **A latency spike breaks the pattern.** One 30 fps run caught a 0.49 s reply instead of
+  0.16 s, stalled ~9 game frames per decision, and stopped short at x=434. Reply times are
+  not constant, and the loop is only as good as the worst reply it gets.
 - **Slow motion isn't real time.** At 15 fps the game runs 4× slower than a human would see
-  it. "Near-real-time" honestly means ~30–60 fps, where the agent is much weaker.
+  it. Keeping up at 15–30 fps is honest; at a true 60 fps the model falls behind.
 
 ## Using the real model
 
@@ -290,36 +273,25 @@ Prefer it fully offline? Both examples work with `--backend mock` and no key at 
 ## Reproduce these results
 
 ```bash
-export OPENAI_API_KEY=sk-...
+export OPENAI_API_KEY=sk-...                        # a live run needs your own key
 python scripts/probe_latency.py --repeats 5         # expect ~0.20 s
 
+# same sweep as the table above: step size fixed, only the game speed changes
 for fps in 15 30 60; do
-  case $fps in 15) fpd=8;; 30) fpd=12;; 60) fpd=20;; esac
   python -m mda --env mario --backend live --mode pipelined \
-      --fps $fps --frames-per-decision $fpd --max-decisions 40 \
+      --fps $fps --frames-per-decision 8 --max-decisions 40 \
       --scale 3 --record runs/live_fps$fps.mp4 --no-hud
 done
 ```
 
-Run the offline test suite any time with `python tests/test_pipeline.py` (16 tests, no key
-or network).
+Reply times wobble, so run each speed a few times. Run the offline test suite any time with
+`python tests/test_pipeline.py` (17 tests, no key or network).
 
 ## Cost
 
 The Decisions API bills **input only** — $0.10 per million tokens, nothing for output. A
-single frame is about **1,050 tokens ≈ $0.0001**, so one decision costs a hundredth of a
-cent. The entire three-run demo above cost **under half a cent**. Cost is never the
-bottleneck here — latency is.
-
-## Roadmap
-
-- **A clean speed sweep** — fix the step size, vary only fps, add seeds, to separate speed
-  from step length.
-- **Run the controls for real** — blank frames and perturbed sprites on 1-1, to separate
-  seeing from remembering.
-- **Unseen levels** — grade on layouts the model can't have memorized.
-- **Ask even earlier** — request the next decision just *before* the current move ends, so
-  latency is hidden instead of paid for.
+single decision is about **500 input tokens ≈ $0.00005**, a twentieth of a cent. The whole
+six-run sweep above cost about **a cent**. Cost is never the bottleneck here — latency is.
 
 ## License
 

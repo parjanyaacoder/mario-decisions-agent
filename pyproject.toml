@@ -24,6 +24,11 @@ record = [
     "imageio-ffmpeg>=0.4",
 ]
 
+# Optional: `python scripts/make_readme_pdf.py` (README.md -> styled PDF via Chrome).
+docs = [
+    "markdown>=3.5",
+]
+
 [project.scripts]
 mda = "mda.__main__:main"
 

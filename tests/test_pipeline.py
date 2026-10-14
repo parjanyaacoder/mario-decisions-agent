@@ -101,6 +101,27 @@ def test_pipelined_loop_produces_decisions():
     assert summary["frames"] > 0
 
 
+def test_pipelined_loop_asks_ahead_and_hides_latency():
+    """Trick B: the next request is in flight *during* the macro.
+
+    With a reply time well under the macro length, the answer should already
+    be waiting when the macro ends, so the loop never stalls. (Before the fix
+    it asked only after the macro finished, and stalled by ~latency*fps frames
+    every single decision.)
+    """
+    env = _StaticEnv(MockEnv().reset())
+    backend = MockBackend(DEFAULT_ACTIONS, latency_s=0.05, jitter_s=0.0, seed=7,
+                          simulate_latency=True)
+    summary = run_episode(
+        env, backend, DEFAULT_ACTIONS,
+        frames_per_decision=12, mode="pipelined",
+        target_fps=60.0, max_decisions=3,
+    )
+    assert summary["decisions"] == 3
+    # 12 frames @ 60fps = 0.2s of macro vs a 0.05s reply: nothing should stall.
+    assert summary["stall_frames"] == 0
+
+
 def test_live_backend_contract_and_frame_saving():
     """Exercise the live path offline: payload shape, parsing, and saved frames."""
     payload = {

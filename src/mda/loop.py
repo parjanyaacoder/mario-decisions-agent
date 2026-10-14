@@ -194,25 +194,36 @@ def run_episode(env, backend, actions, *, frames_per_decision: int = 8,
         else:
             worker = _Worker(backend)
             worker.start()
+            # Ask for the very first move straight away; the fallback action
+            # plays until the answer lands.
             worker.request(frame.copy(), 0)
             outstanding = True
+            pending = None  # an answer that came early, waiting for a macro to end
             try:
                 while not done:
-                    if not outstanding and frames_on_action >= frames_per_decision:
-                        worker.request(frame.copy(), decisions_made)
-                        outstanding = True
-
+                    # Collect the answer as soon as the worker has it...
                     if outstanding:
                         decision = worker.poll()
                         if decision is not None:
+                            pending = decision
                             outstanding = False
-                            decisions_made += 1
-                            emit(decision)
-                            current = action_by_key.get(decision.move, default)
-                            frames_on_action = 0
-                            last_latency = decision.latency_s
-                            last_hazard = decision.hazard_prob
-                            retune(last_latency)
+
+                    # ...but only switch moves on a macro boundary, so every
+                    # action gets its full frames_per_decision of play. Asking
+                    # for the *next* move the moment we switch is what hides the
+                    # latency: the model thinks while this action still plays.
+                    # We stall only when latency outlasts the macro.
+                    if pending is not None and frames_on_action >= frames_per_decision:
+                        current = action_by_key.get(pending.move, default)
+                        decisions_made += 1
+                        emit(pending)
+                        frames_on_action = 0
+                        last_latency = pending.latency_s
+                        last_hazard = pending.hazard_prob
+                        retune(last_latency)
+                        pending = None
+                        worker.request(frame.copy(), decisions_made)
+                        outstanding = True
 
                     frame, done = env.step_buttons(current.button_mask(frames_on_action))
                     step_count += 1
