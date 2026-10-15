@@ -80,8 +80,9 @@ Here's what we found:
   same decisions, same frames, just stretched over 19.8 s instead of 10.0 s. Slow motion is
   a viewing trick, not a difficulty setting.
 - **At 60 fps, the model can't keep up.** Its answer arrives about **12 frames** after the
-  question, so every move gets held roughly twice as long. The game keeps moving while the
-  model is still thinking — that's the speed gap, and it shows up as stalling.
+  question, so every move ends up covering about 12 frames instead of the 8 we asked for.
+  The game keeps moving while the model is still thinking — that's the speed gap, and it
+  shows up as stalling.
 - **On World 1-1, it doesn't cost a life either way.** All three runs get to the same spot,
   because 1-1 is the most-copied level in gaming and a model that already knows it can hide
   bad timing. So this is a claim about **timing**, not about score.
