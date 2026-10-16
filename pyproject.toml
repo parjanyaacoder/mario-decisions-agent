@@ -1,7 +1,7 @@
 [project]
 name = "mario-decisions-agent"
 version = "0.1.0"
-description = "Screenshot-only Super Mario Bros agent driven by the OpenAI Decisions API (gpt-6-luna)."
+description = "Screenshot-only Super Mario Bros agent driven by a vision model (OpenAI Decisions API or TypeSafe System One)."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

@@ -14,7 +14,7 @@ No memory hacks. No hidden game state. Pixels in, button out.
 
 <sub>An AI model playing World 1-1 from raw screenshots — slowed down so you can watch.</sub>
 
-<sub>The real model is the OpenAI Decisions API (<code>gpt-6-luna</code>); reproducing these runs needs your own API key.</sub>
+<sub>The real model is a remote vision model — the OpenAI Decisions API (<code>gpt-6-luna</code>) or TypeSafe's <b>Jev</b> (<code>jev-preview</code>). Reproducing these runs needs your own API key.</sub>
 
 </div>
 
@@ -25,8 +25,8 @@ No memory hacks. No hidden game state. Pixels in, button out.
 Most bots that play games cheat a little. They read the game's memory to find out exactly
 where Mario is, how fast he's moving, and what's coming next — then choose a button.
 **This one can't do any of that.** It sees what you'd see in a screenshot: one frozen
-picture of the level. Its entire brain is a remote vision model on the other end of the
-OpenAI **Decisions API**, and the only thing it is ever asked is:
+picture of the level. Its entire brain is a remote vision model on the other end of an API,
+and the only thing it is ever asked is:
 
 > *"Here's a picture of the screen. Which move gets me further?"*
 
@@ -125,10 +125,11 @@ python -m mda --env mario --backend mock --render --scale 3 --fps 30 --frames-pe
 A window opens and a simple offline heuristic plays the game using the *exact same loop*
 the real model uses.
 
-> **Every number and clip in this README comes from the real model, and reproducing them
-> needs your own OpenAI API key.** The offline `--backend mock` path runs the whole thing
-> for free, but only `--backend live` with `OPENAI_API_KEY` set talks to the actual
-> Decisions API (`gpt-6-luna`). See [Using the real model](#using-the-real-model).
+> **Every number and clip in this README comes from a real vision model, and reproducing them
+> needs your own API key.** The offline `--backend mock` path runs the whole thing
+> for free, but only `--backend live` (OpenAI's `OPENAI_API_KEY`) or `--backend jev`
+> (TypeSafe's `TYPESAFE_API_KEY`) talks to an actual remote model. See
+> [Using the real model](#using-the-real-model).
 
 ---
 
@@ -163,7 +164,7 @@ mario-decisions-agent/
 │   ├── __main__.py     command-line interface
 │   ├── loop.py         blocking + pipelined game loops, frame pacing
 │   ├── env.py          MockEnv (offline toy platformer) + MarioEnv (real NES, lazy import)
-│   ├── backends.py     MockBackend (offline heuristic) + LiveBackend (/v1/decisions)
+│   ├── backends.py     MockBackend (offline) + LiveBackend (/v1/decisions) + JevBackend (/v1/systemone)
 │   ├── actions.py      10-move macro menu (held + tapped buttons, per-frame masks)
 │   ├── cache.py        trick E: perceptual-hash frame cache
 │   ├── viewer.py       resizeable, pixel-crisp game window
@@ -175,7 +176,7 @@ mario-decisions-agent/
 │   ├── make_preview_gifs.py   turn recorded runs into the clips in docs/media
 │   └── make_readme_pdf.py     render this README to a PDF (needs Chrome)
 ├── tests/
-│   └── test_pipeline.py       17 offline tests: no key, no ROM, no network
+│   └── test_pipeline.py       22 offline tests: no key, no ROM, no network
 ├── docs/
 │   ├── architecture.svg       how the world, the loop and the brain fit together
 │   ├── speed-gap.svg          why a ~5 Hz brain fights a 60 Hz game
@@ -245,18 +246,69 @@ python -m mda --env mario --backend live --auto-fps --cache \
 
 Prefer it fully offline? Both commands work with `--backend mock` and no key at all.
 
+### Or: TypeSafe's Jev instead of OpenAI
+
+The brain is swappable, so the same agent runs on
+[TypeSafe's System One API](https://docs.typesafe.ai/introduction) — TypeSafe calls its
+model **Jev**. Same lesson, different endpoint:
+
+```bash
+export TYPESAFE_API_KEY=ts_...
+
+python scripts/probe_latency.py --backend jev --repeats 5
+python -m mda --env mario --backend jev --auto-fps --cache \
+    --scale 3 --record runs/jev.mp4
+```
+
+The two APIs look alike but are not, and the differences are the interesting part:
+
+| | OpenAI Decisions | TypeSafe System One (Jev) |
+|---|---|---|
+| Endpoint | `POST /v1/decisions` | `POST /v1/systemone` |
+| Key | `OPENAI_API_KEY` | `TYPESAFE_API_KEY` |
+| Model | `gpt-6-luna` | `jev-preview` (`jev-1.14.0`) |
+| Image | `input_image` data URL | `assets` map + a reference string in `state` |
+| Yes/no question | `predicate` → probability | `noul` → probability |
+| Options | `choices` list | `criteria` map |
+| Answers | a list | a map |
+| Price (input) | $0.10 / 1M | $0.042 / 1M |
+
+**The one that bites: TypeSafe rejects a too-small image.** A NES frame is 256×240, and
+TypeSafe requires every side to be **at least 280 px** — it rejects the image rather than
+resizing it. So trick **C** (smaller picture) inverts on this backend: the frame is scaled
+*up* into the legal band, not down. `--backend jev` therefore defaults to `--max-side 320`
+(→ 320×300) instead of 256, and the encoder clamps anything smaller.
+
+**And one thing OpenAI can't do:** TypeSafe has a `box` question type that returns *where*
+something is in the image, as fractions of the width and height. `--locate-mario` asks for
+Mario's bounding box in the same request as the move:
+
+```bash
+python -m mda --env mario --backend jev --locate-mario --out runs/jev.jsonl
+```
+
+The box is written to the JSONL log (and printed by the probe) but does **not** feed back
+into the move choice — the agent still decides from pixels alone, so runs stay comparable.
+Strictly, images and `box` are still marked "dreamer-ready" (beta) on TypeSafe's side.
+
+> The measured table further up is the **OpenAI** run. A Jev sweep is the obvious next
+> experiment; the offline tests cover the Jev request/response shape, but there is no
+> published Jev gameplay table yet. Don't cross the two.
+
 ### Key flags
 
 | Flag | Meaning |
 | --- | --- |
 | `--env mock\|mario` | toy platformer vs. real game |
-| `--backend mock\|live` | offline stand-in vs. the real model |
+| `--backend mock\|live\|jev` | offline stand-in / OpenAI Decisions / TypeSafe Jev |
 | `--mode blocking\|pipelined` | freeze during thinking vs. overlap it |
 | `--frames-per-decision N` | how many frames each move is held |
 | `--fps N` | how fast the game runs in real time (`0` = as fast as possible) |
 | `--auto-fps` / `--stale-budget` | pick the game speed from measured latency |
 | `--control normal\|blank` | run the blank-frame control |
-| `--max-side` / `--jpeg-quality` | image budget — the main speed/cost lever |
+| `--max-side` / `--jpeg-quality` | image budget — the main speed/cost lever (default 256 live, 320 jev) |
+| `--typesafe-model` | TypeSafe model alias/id (images need `jev-preview`) |
+| `--locate-mario` | `jev` only: also ask for Mario's bounding box (logged, not used) |
 | `--world` / `--rom-mode` | which level, and which sprite set (`vanilla`/`pixel`/`rectangle`/`downsample`) |
 | `--render` / `--scale N` | show the game window, at N× size |
 | `--record PATH` / `--record-fps` | save the run as `out.mp4`/`.gif` or a folder of PNGs |
@@ -280,16 +332,21 @@ done
 ```
 
 Reply times wobble, so run each speed a few times. Run the offline test suite any time with
-`python tests/test_pipeline.py` (17 tests, no key or network).
+`python tests/test_pipeline.py` (22 tests, no key or network).
+
+Swap `--backend live` for `--backend jev` to run the same sweep on TypeSafe's Jev instead
+(see [Or: TypeSafe's Jev instead of OpenAI](#or-typesafes-jev-instead-of-openai)).
 
 ## Cost
 
-The Decisions API bills **input only** — $0.10 per million tokens, nothing for output. A
-single decision is about **500 input tokens ≈ $0.00005**, a twentieth of a cent. The whole
-six-run sweep above cost about **a cent**. Cost is never the bottleneck here — latency is.
+Both hosted APIs bill **input only**. OpenAI's Decisions API is $0.10 per million tokens;
+TypeSafe's System One is **$0.042** per million. A single decision is about **500 input
+tokens ≈ $0.00005** on OpenAI (a twentieth of a cent) and about half that on TypeSafe. The
+whole six-run sweep above cost about **a cent**. Cost is never the bottleneck here —
+latency is.
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
 
-<div align="center"><sub>Not affiliated with Nintendo or OpenAI. Super Mario Bros is a trademark of Nintendo; the game ROM is bundled by <code>gym-super-mario-bros</code> for research use.</sub></div>
+<div align="center"><sub>Not affiliated with Nintendo, OpenAI or TypeSafe. Super Mario Bros is a trademark of Nintendo; the game ROM is bundled by <code>gym-super-mario-bros</code> for research use.</sub></div>

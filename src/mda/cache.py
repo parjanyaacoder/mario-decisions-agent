@@ -86,6 +86,8 @@ class CachingBackend(BaseBackend):
                 note="cache",
                 raw=prev.raw,
                 cached=True,
+                mario_box=prev.mario_box,
+                model=prev.model,
             )
 
         self.misses += 1

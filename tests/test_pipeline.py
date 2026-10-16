@@ -7,7 +7,18 @@ import pathlib
 import tempfile
 
 from mda.actions import DEFAULT_ACTIONS, ACTION_BY_KEY
-from mda.backends import LiveBackend, MockBackend, blank_transform
+from mda.backends import (
+    JevBackend,
+    LiveBackend,
+    MockBackend,
+    blank_transform,
+    encode_jpeg_base64,
+    encode_jpeg_data_url,
+    TYPESAFE_MAX_PIXELS,
+    TYPESAFE_MAX_SIDE,
+    TYPESAFE_MIN_PIXELS,
+    TYPESAFE_MIN_SIDE,
+)
 from mda.cache import CachingBackend, fingerprint, hamming
 from mda.env import MockEnv
 from mda.loop import run_episode
@@ -32,10 +43,12 @@ class _FakeSession:
         self.payload = payload
         self.status_code = status_code
         self.sent: dict | None = None
+        self.sent_headers: dict | None = None
         self.calls = 0
 
     def post(self, url, headers=None, json=None, timeout=None):  # noqa: A002
         self.sent = json
+        self.sent_headers = headers
         self.calls += 1
         return _FakeResponse(self.payload, self.status_code)
 
@@ -324,6 +337,179 @@ def test_live_backend_retries_transient_then_succeeds():
     assert calls["n"] == 3       # it did retry through the 503s
     assert backend.retries == 2
     backend.close()
+
+
+def test_typesafe_image_encoding_meets_type_safe_limits():
+    """TypeSafe *rejects* out-of-band images, and the NES frame is too small.
+
+    256x240 is under the 280 px minimum on both sides, so the encoder has to
+    scale *up*. The Decisions path must stay byte-for-byte the old behaviour.
+    """
+    frame = MockEnv().reset()
+    assert frame.shape == (240, 256, 3)
+
+    b64, raw, (w, h) = encode_jpeg_base64(frame, quality=80, max_side=320)
+    assert not b64.startswith("data:")          # bare base64, no prefix
+    assert len(raw) > 0
+    assert (w, h) == (320, 300)                 # 1.25x the 256x240 frame
+    assert min(w, h) >= TYPESAFE_MIN_SIDE
+    assert max(w, h) <= TYPESAFE_MAX_SIDE
+    assert TYPESAFE_MIN_PIXELS <= w * h <= TYPESAFE_MAX_PIXELS
+
+    # max_side is a real knob: a bigger target buys detail (and costs latency).
+    _, _, (w1, h1) = encode_jpeg_base64(frame, quality=80, max_side=640)
+    assert (w1, h1) == (640, 600)
+
+    # An absurd target clamps to the ceiling instead of being rejected.
+    _, _, (wc, hc) = encode_jpeg_base64(frame, quality=80, max_side=4000)
+    assert max(wc, hc) == TYPESAFE_MAX_SIDE
+    assert wc * hc <= TYPESAFE_MAX_PIXELS
+
+    # Even a deliberately tiny max_side gets raised into the legal band.
+    _, _, (w2, h2) = encode_jpeg_base64(frame, quality=80, max_side=64)
+    assert min(w2, h2) >= TYPESAFE_MIN_SIDE
+    assert TYPESAFE_MIN_PIXELS <= w2 * h2 <= TYPESAFE_MAX_PIXELS
+
+    # The Decisions encoder keeps the whole frame: no crop, no silent upscale.
+    data_url, _, (w3, h3) = encode_jpeg_data_url(frame, quality=80, max_side=256)
+    assert data_url.startswith("data:image/jpeg;base64,")
+    assert (w3, h3) == (256, 240)
+
+
+_WEV_PAYLOAD = {
+    "model": "jev-1.14.0",
+    "answers": {
+        "next_move": {
+            "type": "choice",
+            "choice": "HIGH_JUMP_RIGHT",
+            "confidence": 0.83,
+            "probabilities": {
+                "RUN_RIGHT": 0.05,
+                "HIGH_JUMP_RIGHT": 0.83,
+                "SHORT_HOP_RIGHT": 0.12,
+            },
+        },
+        "hazard_imminent": {"type": "noul", "noul": 0.78},
+    },
+    "usage": {"input_tokens": 512, "output_tokens": 0},
+}
+
+
+def test_jev_backend_request_and_response_shape():
+    """Exercise the TypeSafe path offline: asset, questions map, noul, parsing."""
+    session = _FakeSession(_WEV_PAYLOAD)
+    with tempfile.TemporaryDirectory() as tmp:
+        backend = JevBackend(
+            DEFAULT_ACTIONS, api_key="test-key", session=session,
+            save_frames_dir=tmp,
+        )
+        decision = backend.decide(MockEnv().reset())
+
+        # --- response parsing (matches as a map, not a list) ---
+        assert decision.move == "HIGH_JUMP_RIGHT"
+        assert decision.move_confidence == 0.83
+        assert decision.move_probs == {
+            "RUN_RIGHT": 0.05, "HIGH_JUMP_RIGHT": 0.83, "SHORT_HOP_RIGHT": 0.12,
+        }
+        assert decision.hazard_prob == 0.78
+        assert decision.hazard_confidence is None   # a noul has no confidence
+        assert decision.refused is False
+        assert decision.model == "jev-1.14.0"
+        assert decision.mario_box is None           # box is opt-in
+
+        # --- outgoing payload uses the real System One contract ---
+        sent = session.sent
+        assert sent["model"] == "jev-preview"
+        assert "input" not in sent and "assets" in sent
+
+        ref = sent["state"]["frame"]
+        assert ref == JevBackend.FRAME_REF
+        asset = sent["assets"][ref]
+        assert asset["type"] == "image" and asset["format"] == "jpg"
+        assert not asset["data_base64"].startswith("data:")
+        assert set(sent["assets"]) == {ref}         # every asset is referenced
+
+        assert isinstance(sent["questions"], dict)   # a map, unlike the list API
+        choice_q = sent["questions"]["next_move"]
+        assert choice_q["type"] == "choice"
+        assert "criteria" in choice_q and "choices" not in choice_q
+        assert set(choice_q["criteria"]) == set(ACTION_BY_KEY)
+        assert "`frame`" in choice_q["instructions"]
+        assert sent["questions"]["hazard_imminent"]["type"] == "noul"
+        assert "`frame`" in sent["questions"]["hazard_imminent"]["instructions"]
+
+        # --- images are behind a beta header ---
+        assert session.sent_headers["TypeSafe-Danger-Zone-Images"] == "true"
+        assert session.sent_headers["Authorization"] == "Bearer test-key"
+
+        # --- a legal JPEG is on disk, and cost uses TypeSafe's price ---
+        saved = list(pathlib.Path(tmp).glob("*.jpg"))
+        assert len(saved) == 1 and saved[0].stat().st_size > 0
+        assert backend.input_tokens == 512
+        assert abs(backend.cost_usd - 512 / 1_000_000 * 0.042) < 1e-12
+        assert backend.stats()["backend"] == "jev"
+        backend.close()
+
+
+def test_jev_box_question_is_opt_in():
+    payload = {
+        "model": "jev-1.14.0",
+        "answers": {
+            "next_move": {"type": "choice", "choice": "RUN_RIGHT",
+                          "confidence": 0.9, "probabilities": {"RUN_RIGHT": 0.9}},
+            "hazard_imminent": {"type": "noul", "noul": 0.1},
+            "mario_box": {
+                "type": "box",
+                "box": {"left": 0.18, "top": 0.62, "right": 0.24, "bottom": 0.86},
+                "confidence": 0.91,
+            },
+        },
+        "usage": {"input_tokens": 640},
+    }
+    session = _FakeSession(payload)
+    backend = JevBackend(DEFAULT_ACTIONS, api_key="k", session=session, locate_mario=True)
+    decision = backend.decide(MockEnv().reset())
+
+    assert session.sent["questions"]["mario_box"]["type"] == "box"
+    assert decision.mario_box == {
+        "left": 0.18, "top": 0.62, "right": 0.24, "bottom": 0.86,
+    }
+    assert decision.move == "RUN_RIGHT"
+    backend.close()
+
+
+def test_jev_backend_falls_back_on_missing_or_unknown_choice():
+    # Unknown option name -> the safe fallback, but not "refused".
+    bogus = {"answers": {"next_move": {"type": "choice", "choice": "FLY_UP"}}}
+    backend = JevBackend(DEFAULT_ACTIONS, api_key="k", session=_FakeSession(bogus))
+    d1 = backend.decide(MockEnv().reset())
+    assert d1.move == "RUN_RIGHT"
+    assert d1.refused is False
+    assert d1.hazard_prob is None
+    assert d1.move_probs == {}
+    backend.close()
+
+    # No answer at all -> refused, still safe.
+    empty = {"answers": {}}
+    backend = JevBackend(DEFAULT_ACTIONS, api_key="k", session=_FakeSession(empty))
+    d2 = backend.decide(MockEnv().reset())
+    assert d2.refused is True
+    assert d2.move == "RUN_RIGHT"
+    backend.close()
+
+
+def test_jev_backend_requires_its_own_key():
+    saved = os.environ.pop("TYPESAFE_API_KEY", None)
+    try:
+        try:
+            JevBackend(DEFAULT_ACTIONS)
+        except RuntimeError as exc:
+            assert "TYPESAFE_API_KEY" in str(exc)
+        else:
+            raise AssertionError("expected RuntimeError when no key is set")
+    finally:
+        if saved is not None:
+            os.environ["TYPESAFE_API_KEY"] = saved
 
 
 if __name__ == "__main__":

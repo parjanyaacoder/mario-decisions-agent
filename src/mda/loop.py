@@ -134,6 +134,8 @@ def run_episode(env, backend, actions, *, frames_per_decision: int = 8,
                 "latency_s": decision.latency_s,
                 "refused": decision.refused,
                 "cached": decision.cached,
+                "mario_box": decision.mario_box,
+                "model": decision.model,
                 "note": decision.note,
                 "score": snapshot_score(),
             })

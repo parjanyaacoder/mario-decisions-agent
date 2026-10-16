@@ -5,7 +5,13 @@ from __future__ import annotations
 import argparse
 
 from .actions import DEFAULT_ACTIONS
-from .backends import FrameTransformBackend, LiveBackend, MockBackend, blank_transform
+from .backends import (
+    FrameTransformBackend,
+    JevBackend,
+    LiveBackend,
+    MockBackend,
+    blank_transform,
+)
 from .cache import CachingBackend
 from .env import MarioEnv, MockEnv
 from .hud import Hud
@@ -33,10 +39,23 @@ def build_backend(kind: str, args):
     if kind == "mock":
         return MockBackend(DEFAULT_ACTIONS, latency_s=args.mock_latency,
                            seed=args.seed, simulate_latency=args.mock_sleep)
+    if kind == "jev":
+        # TypeSafe rejects images under 280 px a side, so it wants a slightly
+        # *larger* frame than the Decisions path, not a smaller one.
+        max_side = args.max_side if args.max_side is not None else 320
+        return JevBackend(
+            DEFAULT_ACTIONS,
+            model=args.typesafe_model,
+            jpeg_quality=args.jpeg_quality,
+            max_side=max_side,
+            save_frames_dir=args.save_frames,
+            locate_mario=args.locate_mario,
+        )
+    max_side = args.max_side if args.max_side is not None else 256
     return LiveBackend(
         DEFAULT_ACTIONS,
         jpeg_quality=args.jpeg_quality,
-        max_side=args.max_side,
+        max_side=max_side,
         save_frames_dir=args.save_frames,
     )
 
@@ -57,10 +76,13 @@ def format_summary(s: dict) -> str:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         prog="mda",
-        description="Screenshot-only Mario agent driven by the OpenAI Decisions API.",
+        description="Screenshot-only Mario agent driven by a vision model "
+                    "(OpenAI Decisions API or TypeSafe System One).",
     )
     p.add_argument("--env", choices=["mock", "mario"], default="mock")
-    p.add_argument("--backend", choices=["mock", "live"], default="mock")
+    p.add_argument("--backend", choices=["mock", "live", "jev"], default="mock",
+                   help="'live' = OpenAI Decisions API (OPENAI_API_KEY); "
+                        "'jev' = TypeSafe System One (TYPESAFE_API_KEY)")
     p.add_argument("--mode", choices=["blocking", "pipelined"], default="pipelined")
     p.add_argument("--frames-per-decision", type=int, default=8,
                    help="frames each macro-action is held (the latency-covering lever)")
@@ -88,7 +110,15 @@ def main(argv=None) -> int:
     p.add_argument("--record-fps", type=float, default=None,
                    help="playback fps of the recording (default: --fps, else 60)")
     p.add_argument("--jpeg-quality", type=int, default=80)
-    p.add_argument("--max-side", type=int, default=256)
+    p.add_argument("--max-side", type=int, default=None,
+                   help="longest side of the JPEG sent to the model "
+                        "(default: 256 for --backend live, 320 for --backend jev; "
+                        "TypeSafe rejects images under 280 px a side)")
+    p.add_argument("--typesafe-model", default="jev-preview",
+                   help="TypeSafe model alias/id (images need jev-preview / jev-1.14.0)")
+    p.add_argument("--locate-mario", action="store_true",
+                   help="--backend jev only: also ask a TypeSafe 'box' question for "
+                        "Mario's position (recorded, not used to pick the move)")
     p.add_argument("--mock-latency", type=float, default=0.35)
     p.add_argument("--mock-sleep", action="store_true",
                    help="make MockBackend actually sleep for --mock-latency (rehearse the mismatch offline)")
